@@ -947,10 +947,11 @@ def make_persistent_request(url, headers=None, timeout=None, proxy_url=None, **k
         app.logger.error("Impossibile ottenere sessione persistente")
         raise Exception("Impossibile ottenere sessione persistente")
     
-    # Headers per keep-alive
+    # Headers per keep-alive con supporto gzip
     request_headers = {
         'Connection': 'keep-alive',
-        'Keep-Alive': f'timeout={KEEP_ALIVE_TIMEOUT}, max={MAX_KEEP_ALIVE_REQUESTS}'
+        'Keep-Alive': f'timeout={KEEP_ALIVE_TIMEOUT}, max={MAX_KEEP_ALIVE_REQUESTS}',
+        'Accept-Encoding': 'gzip, deflate'  # Aggiungi supporto gzip
     }
     
     if headers:
@@ -964,6 +965,12 @@ def make_persistent_request(url, headers=None, timeout=None, proxy_url=None, **k
             verify=VERIFY_SSL,
             **kwargs
         )
+        
+        # Decompressione automatica se necessario
+        if response.headers.get('content-encoding') == 'gzip':
+            import gzip
+            response._content = gzip.decompress(response.content)
+            
         return response
     except Exception as e:
         app.logger.error(f"Errore nella richiesta persistente: {e}")
@@ -1061,15 +1068,25 @@ def process_daddylive_url(url):
     return url
 
 def resolve_m3u8_link(url, headers=None):
-    """
-    Risolve URL con una logica selettiva: processa solo i link riconosciuti come
-    DaddyLive, altrimenti li passa direttamente.
-    """
+    """Risolve URL con headers ottimizzati per newkso.ru"""
     if not url:
         app.logger.error("Errore: URL non fornito.")
         return {"resolved_url": None, "headers": {}}
 
     current_headers = headers.copy() if headers else {}
+    
+    # Headers specifici per newkso.ru
+    if 'newkso.ru' in url.lower():
+        newkso_headers = {
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Referer': 'https://newkso.ru/',
+            'Origin': 'https://newkso.ru'
+        }
+        current_headers.update(newkso_headers)
     
     # 1. Estrazione degli header dall'URL (logica invariata)
     clean_url = url
