@@ -394,7 +394,7 @@ class PreBufferManager:
                 )
                 buffer_memory_percent = (total_buffer_size / memory.total) * 100
             
-            app.logger.info(f"Memoria sistema: {memory_percent:.1f}%, Buffer: {buffer_memory_percent:.1f}%")
+            app.logger.debug(f"Memoria sistema: {memory_percent:.1f}%, Buffer: {buffer_memory_percent:.1f}%")
             
             # Cleanup di emergenza se la RAM supera la soglia
             emergency_threshold = self.pre_buffer_config['emergency_cleanup_threshold']
@@ -981,8 +981,10 @@ def make_persistent_request(url, headers=None, timeout=None, proxy_url=None, **k
         raise
 
 def get_dynamic_timeout(url, base_timeout=REQUEST_TIMEOUT):
-    """Calcola timeout dinamico basato sul tipo di risorsa."""
-    if '.ts' in url.lower():
+    """Calcola timeout dinamico basato sul tipo di risorsa e dominio."""
+    if 'newkso.ru' in url.lower():
+        return base_timeout * 3  # Timeout triplo per newkso.ru
+    elif '.ts' in url.lower():
         return base_timeout * 2  # Timeout doppio per segmenti TS
     elif '.m3u8' in url.lower():
         return base_timeout * 1.5  # Timeout aumentato per playlist
