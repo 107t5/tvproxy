@@ -669,33 +669,8 @@ def rewrite_m3u_links_streaming(m3u_lines_iterator, base_url, api_password):
            ('http://' in logical_line or 'https://' in logical_line):
             app.logger.info(f"Processando link: {logical_line[:100]}...")
             
-            # Decide la logica di riscrittura in base alla presenza della password
-            if api_password is not None:
-                # --- LOGICA CON PASSWORD (ESISTENTE) ---
-                processed_url_content = logical_line
-                
-                if 'vavoo.to' in logical_line:
-                    processed_url_content = f"{base_url}/proxy/hls/manifest.m3u8?api_password={api_password}&d={logical_line}"
-                    app.logger.info(f"Riscritto Vavoo: {logical_line[:50]}... -> {processed_url_content[:50]}...")
-                elif 'vixsrc.to' in logical_line:
-                    processed_url_content = f"{base_url}/extractor/video?host=VixCloud&redirect_stream=true&api_password={api_password}&d={logical_line}"
-                    app.logger.info(f"Riscritto VixCloud: {logical_line[:50]}... -> {processed_url_content[:50]}...")
-                elif '.m3u8' in logical_line:
-                    processed_url_content = f"{base_url}/proxy/hls/manifest.m3u8?api_password={api_password}&d={logical_line}"
-                    app.logger.info(f"Riscritto M3U8: {logical_line[:50]}... -> {processed_url_content[:50]}...")
-                elif '.mpd' in logical_line:
-                    processed_url_content = f"{base_url}/proxy/mpd/manifest.m3u8?api_password={api_password}&d={logical_line}"
-                    app.logger.info(f"Riscritto MPD: {logical_line[:50]}... -> {processed_url_content[:50]}...")
-                elif '.php' in logical_line:
-                    processed_url_content = f"{base_url}/extractor/video?host=DLHD&redirect_stream=true&api_password={api_password}&d={logical_line}"
-                    app.logger.info(f"Riscritto PHP: {logical_line[:50]}... -> {processed_url_content[:50]}...")
-                else:
-                    # Link non modificato dalle regole, ma gli header potrebbero essere aggiunti
-                    app.logger.info(f"Link non modificato (pattern): {logical_line[:50]}...")
-            else:
-                # --- NUOVA LOGICA SENZA PASSWORD ---
-                processed_url_content = f"{base_url}/proxy/m3u?url={logical_line}"
-                app.logger.info(f"Riscritto (senza password): {logical_line[:50]}... -> {processed_url_content[:50]}...")
+            processed_url_content = f"{base_url}/proxy/m3u?url={logical_line}"
+            app.logger.info(f"Riscritto: {logical_line[:50]}... -> {processed_url_content[:50]}...")
             
             # Applica gli header raccolti, indipendentemente dalla modalità
             if current_ext_headers:
@@ -1034,6 +1009,11 @@ def extract_channel_id(url):
     if match_premium:
         return match_premium.group(1)
 
+    # Gestione /stream/stream-856.php e simili
+    match_stream = re.search(r'/stream/stream-(\d+)\.php', url)
+    if match_stream:
+        return match_stream.group(1)
+
     match_player = re.search(r'/(?:watch|stream|cast|player)/stream-(\d+)\.php', url)
     if match_player:
         return match_player.group(1)
@@ -1153,45 +1133,33 @@ def resolve_m3u8_link(url, headers=None):
     final_headers_for_resolving = {**final_headers, **daddylive_headers}
 
     try:
-        github_url = 'https://raw.githubusercontent.com/thecrewwh/dl_url/refs/heads/main/dl.xml'
-        main_url_req = requests.get(
-            github_url,
-            timeout=10,  # Timeout ridotto per GitHub
-            proxies=get_proxy_for_url(github_url),
-            verify=VERIFY_SSL
-        )
-        main_url_req.raise_for_status()
-        main_url = main_url_req.text
-        baseurl = re.findall('(?s)src = "([^"]*)', main_url)[0]
-
+        # Usa direttamente l'URL processato (clean_url) come baseurl
         channel_id = extract_channel_id(clean_url)
         if not channel_id:
             app.logger.error(f"Impossibile estrarre ID canale da {clean_url}")
             return {"resolved_url": clean_url, "headers": current_headers}
 
-        stream_url = f"{baseurl}stream/stream-{channel_id}.php"
+        # Ricostruisci la logica DaddyLive usando direttamente clean_url come base
+        stream_url = clean_url
 
-        final_headers_for_resolving['Referer'] = baseurl + '/'
-        final_headers_for_resolving['Origin'] = baseurl
-
-        max_retries = 2  # Ridotto da 3 a 2 per velocizzare
+        max_retries = 2
         for retry in range(max_retries):
             try:
                 proxy_config = get_proxy_with_fallback(stream_url)
-                response = requests.get(stream_url, headers=final_headers_for_resolving, timeout=15, proxies=proxy_config, verify=VERIFY_SSL)  # Timeout ridotto
+                response = requests.get(stream_url, headers=final_headers_for_resolving, timeout=15, proxies=proxy_config, verify=VERIFY_SSL)
                 response.raise_for_status()
-                break  # Success, exit retry loop
+                break
             except requests.exceptions.ProxyError as e:
                 if "429" in str(e) and retry < max_retries - 1:
                     app.logger.warning(f"Proxy rate limited (429), retry {retry + 1}/{max_retries}: {stream_url}")
-                    time.sleep(1)  # Ridotto il backoff
+                    time.sleep(1)
                     continue
                 else:
                     raise
             except requests.RequestException as e:
                 if retry < max_retries - 1:
                     app.logger.warning(f"Request failed, retry {retry + 1}/{max_retries}: {stream_url}")
-                    time.sleep(0.5)  # Ridotto il backoff
+                    time.sleep(0.5)
                     continue
                 else:
                     raise
@@ -1199,10 +1167,14 @@ def resolve_m3u8_link(url, headers=None):
         iframes = re.findall(r'<a[^>]*href="([^"]+)"[^>]*>\s*<button[^>]*>\s*Player\s*2\s*</button>', response.text)
         if not iframes:
             app.logger.error("Nessun link Player 2 trovato")
-            return {"resolved_url": clean_url, "headers": current_headers}
+            return {"resolved_url": None, "headers": current_headers}
 
         url2 = iframes[0]
-        url2 = baseurl + url2
+        # Se url2 è relativo, uniscilo a clean_url
+        if url2.startswith('/'):
+            base_url_parsed = urlparse(clean_url)
+            baseurl = f"{base_url_parsed.scheme}://{base_url_parsed.netloc}"
+            url2 = urljoin(baseurl, url2)
         url2 = url2.replace('//cast', '/cast')
 
         final_headers_for_resolving['Referer'] = url2
@@ -1213,7 +1185,7 @@ def resolve_m3u8_link(url, headers=None):
         iframes = re.findall(r'iframe src="([^"]*)', response.text)
         if not iframes:
             app.logger.error("Nessun iframe trovato nella pagina Player 2")
-            return {"resolved_url": clean_url, "headers": current_headers}
+            return {"resolved_url": None, "headers": current_headers}
 
         iframe_url = iframes[0]
         response = requests.get(iframe_url, headers=final_headers_for_resolving, timeout=15, proxies=get_proxy_for_url(iframe_url), verify=VERIFY_SSL)
@@ -1221,55 +1193,86 @@ def resolve_m3u8_link(url, headers=None):
 
         iframe_content = response.text
 
-        try:
-            channel_key = re.findall(r'(?s) channelKey = \"([^"]*)', iframe_content)[0]
-            auth_ts_b64 = re.findall(r'(?s)c = atob\("([^"]*)', iframe_content)[0]
-            auth_ts = base64.b64decode(auth_ts_b64).decode('utf-8')
-            auth_rnd_b64 = re.findall(r'(?s)d = atob\("([^"]*)', iframe_content)[0]
-            auth_rnd = base64.b64decode(auth_rnd_b64).decode('utf-8')
-            auth_sig_b64 = re.findall(r'(?s)e = atob\("([^"]*)', iframe_content)[0]
-            auth_sig = base64.b64decode(auth_sig_b64).decode('utf-8')
-            auth_sig = quote_plus(auth_sig)
-            auth_host_b64 = re.findall(r'(?s)a = atob\("([^"]*)', iframe_content)[0]
-            auth_host = base64.b64decode(auth_host_b64).decode('utf-8')
-            auth_php_b64 = re.findall(r'(?s)b = atob\("([^"]*)', iframe_content)[0]
-            auth_php = base64.b64decode(auth_php_b64).decode('utf-8')
 
+        try:
+            # --- NUOVA LOGICA (BUNDLE) ---
+            bundle_b64 = re.findall(r'const BUNDLE = "([^"]+)"', iframe_content)
+            if bundle_b64:
+                app.logger.info("Rilevata nuova struttura BUNDLE per DaddyLive.")
+                bundle_json_str = base64.b64decode(bundle_b64[0]).decode('utf-8')
+                parts_b64 = json.loads(bundle_json_str)
+                parts = {k: base64.b64decode(v).decode('utf-8') for k, v in parts_b64.items()}
+                channel_key = re.findall(r'const CHANNEL_KEY = "([^"]+)"', iframe_content)[0]
+                app.logger.info(f"Parametri estratti da BUNDLE: channel_key={channel_key}")
+                auth_host = parts['b_host']
+                auth_php = parts['b_script']
+                auth_ts = parts['b_ts']
+                auth_rnd = parts['b_rnd']
+                auth_sig = quote_plus(parts['b_sig'])
+            else:
+                # --- VECCHIA LOGICA (FALLBACK) ---
+                app.logger.info("Struttura BUNDLE non trovata, fallback alla vecchia logica.")
+                channel_key = re.findall(r'(?s) channelKey = \"([^"]*)', iframe_content)[0]
+                auth_ts_b64 = re.findall(r'(?s)c = atob\("([^"]*)', iframe_content)[0]
+                auth_ts = base64.b64decode(auth_ts_b64).decode('utf-8')
+                auth_rnd_b64 = re.findall(r'(?s)d = atob\("([^"]*)', iframe_content)[0]
+                auth_rnd = base64.b64decode(auth_rnd_b64).decode('utf-8')
+                auth_sig_b64 = re.findall(r'(?s)e = atob\("([^"]*)', iframe_content)[0]
+                auth_sig_raw = base64.b64decode(auth_sig_b64).decode('utf-8')
+                auth_sig = quote_plus(auth_sig_raw)
+                auth_host_b64 = re.findall(r'(?s)a = atob\("([^"]*)', iframe_content)[0]
+                auth_host = base64.b64decode(auth_host_b64).decode('utf-8')
+                auth_php_b64 = re.findall(r'(?s)b = atob\("([^"]*)', iframe_content)[0]
+                auth_php = base64.b64decode(auth_php_b64).decode('utf-8')
+                app.logger.info(f"Parametri estratti con vecchia logica: channel_key={channel_key}")
 
         except (IndexError, Exception) as e:
-            app.logger.error(f"Errore estrazione parametri: {e}")
-            return {"resolved_url": clean_url, "headers": current_headers}
+            app.logger.error(f"Errore estrazione parametri DaddyLive: {e}")
+            return {"resolved_url": None, "headers": current_headers}
 
+        # Use the full iframe_url as Referer for all subsequent requests
+        iframe_domain = urlparse(iframe_url).netloc
+        referer_full = iframe_url
+        origin_full = f'https://{iframe_domain}'
+        chrome_ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        strict_headers = {
+            'User-Agent': chrome_ua,
+            'Referer': referer_full,
+            'Origin': origin_full,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Connection': 'keep-alive'
+        }
+
+        # Use these headers for all DaddyLive requests after iframe extraction
         auth_url = f'{auth_host}{auth_php}?channel_id={channel_key}&ts={auth_ts}&rnd={auth_rnd}&sig={auth_sig}'
-        auth_response = requests.get(auth_url, headers=final_headers_for_resolving, timeout=15, proxies=get_proxy_for_url(auth_url), verify=VERIFY_SSL)
+        auth_response = requests.get(auth_url, headers=strict_headers, timeout=15, proxies=get_proxy_for_url(auth_url), verify=VERIFY_SSL)
         auth_response.raise_for_status()
 
-        host = re.findall('(?s)m3u8 =.*?:.*?:.*?".*?".*?"([^"]*)', iframe_content)[0]
-        server_lookup = re.findall(r'n fetchWithRetry\(\s*\'([^\']*)', iframe_content)[0]
-        server_lookup_url = f"https://{urlparse(iframe_url).netloc}{server_lookup}{channel_key}"
-
-        lookup_response = requests.get(server_lookup_url, headers=final_headers_for_resolving, timeout=15, proxies=get_proxy_for_url(server_lookup_url), verify=VERIFY_SSL)
+        # Get the server_key
+        server_lookup_url = f"https://{iframe_domain}/server_lookup.php?channel_id={channel_key}"
+        app.logger.info(f"Recupero della server_key da: {server_lookup_url}")
+        lookup_response = requests.get(server_lookup_url, headers=strict_headers, timeout=15, proxies=get_proxy_for_url(server_lookup_url), verify=VERIFY_SSL)
         lookup_response.raise_for_status()
         server_data = lookup_response.json()
         server_key = server_data['server_key']
+        app.logger.info(f"Ottenuta server_key: {server_key}")
 
-        referer_raw = f'https://{urlparse(iframe_url).netloc}'
-        clean_m3u8_url = f'https://{server_key}{host}{server_key}/{channel_key}/mono.m3u8'
-
-        final_headers_for_fetch = {
-            'User-Agent': final_headers_for_resolving.get('User-Agent'),
-            'Referer': referer_raw,
-            'Origin': referer_raw
-        }
+        # Build the final M3U8 URL
+        if server_key == 'top1/cdn':
+            clean_m3u8_url = f'https://top1.newkso.ru/top1/cdn/{channel_key}/mono.m3u8'
+        else:
+            clean_m3u8_url = f'https://{server_key}new.newkso.ru/{server_key}/{channel_key}/mono.m3u8'
+        app.logger.info(f"URL M3U8 costruito: {clean_m3u8_url}")
 
         return {
             "resolved_url": clean_m3u8_url,
-            "headers": {**final_headers, **final_headers_for_fetch}
+            "headers": {**final_headers, **strict_headers}
         }
 
     except Exception as e:
-        # In caso di errore nella risoluzione, restituisce l'URL originale
-        return {"resolved_url": clean_url, "headers": final_headers}
+        app.logger.error(f"Errore generale nella risoluzione DaddyLive: {e}")
+        return {"resolved_url": None, "headers": final_headers}
 
 # Thread di statistiche rimosso - solo proxy
 
@@ -1525,10 +1528,10 @@ def url_builder():
     """
     html_content = """
     <!DOCTYPE html>
-    <html lang="it">
+    <html lang=\"it\">
     <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta charset=\"UTF-8\">
+        <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
         <title>URL Builder - Server Proxy M3U</title>
         <style>
             body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background-color: #f5f5f5; }
@@ -1537,7 +1540,7 @@ def url_builder():
             h2 { color: #2c5aa0; border-bottom: 2px solid #2c5aa0; padding-bottom: 5px; text-align: left; margin-top: 30px; }
             .form-group { margin-bottom: 15px; }
             label { display: block; margin-bottom: 5px; font-weight: bold; color: #555; }
-            input[type="text"], input[type="url"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+            input[type=\"text\"], input[type=\"url\"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
             .btn { display: inline-block; padding: 10px 20px; background: #2c5aa0; color: white; text-decoration: none; border-radius: 5px; margin: 5px; cursor: pointer; border: none; font-size: 16px; }
             .btn:hover { background: #1e3d6f; }
             .btn-add { background-color: #28a745; }
@@ -1569,7 +1572,11 @@ def url_builder():
 
             <div class="output-area">
                 <label for="generated-url">URL Generato</label>
-                <div id="generated-url">L'URL apparirà qui...</div>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <div id="generated-url" style="flex:1;">L'URL apparirà qui...</div>
+                    <button type="button" class="btn" id="copy-url-btn" onclick="copyGeneratedUrl()">Copia URL</button>
+                </div>
+                <div id="copy-success" style="color: #28a745; font-size: 0.95em; margin-top: 5px; display: none;">Copiato!</div>
             </div>
 
             <div class="home-link">
@@ -1582,16 +1589,6 @@ def url_builder():
             <div class="playlist-entry">
                 <button type="button" class="btn btn-remove" style="position: absolute; top: 10px; right: 10px;" onclick="this.parentElement.remove()">Rimuovi</button>
                 <div class="form-group">
-                    <label>Dominio (MFP o TvProxy, con porta se necessario)</label>
-                    <input type="text" class="dominio" placeholder="Es: https://mfp.com oppure https://tvproxy.com">
-                </div>
-                <div class="form-group">
-                    <label>Password API</label>
-                    <input type="text" class="password" placeholder="Obbligatoria per MFP, lasciare vuoto per TvProxy">
-                    <small style="color: #6c757d; display: block; margin-top: 4px;">
-                        <b>MFP:</b> Inserire la password. <br><b>TvProxy:</b> Lasciare vuoto.</small>
-                </div>
-                <div class="form-group">
                     <label>URL della Playlist M3U</label>
                     <input type="url" class="playlist-url" placeholder="Es: http://provider.com/playlist.m3u">
                 </div>
@@ -1600,9 +1597,7 @@ def url_builder():
 
         <script>
             document.addEventListener('DOMContentLoaded', function() {
-                // Imposta l'indirizzo del server di default
                 document.getElementById('server-address').value = window.location.origin;
-                // Aggiunge una playlist di default all'avvio
                 addPlaylistEntry();
             });
 
@@ -1622,29 +1617,36 @@ def url_builder():
                 const definitions = [];
 
                 entries.forEach(entry => {
-                    const dominio = entry.querySelector('.dominio').value.trim();
-                    const password = entry.querySelector('.password').value.trim();
                     const playlistUrl = entry.querySelector('.playlist-url').value.trim();
-
-                    if (dominio && playlistUrl) {
-                        let credsPart = dominio;
-                        if (password) {
-                            credsPart += ':' + password;
-                        }
-                        definitions.push(credsPart + '&' + playlistUrl);
+                    if (playlistUrl) {
+                        definitions.push(playlistUrl);
                     }
                 });
 
                 if (definitions.length === 0) {
                     document.getElementById('generated-url').textContent = 'Nessuna playlist valida inserita.';
+                    document.getElementById('copy-url-btn').disabled = true;
                     return;
                 }
 
                 const finalUrl = serverAddress + '/proxy?' + definitions.join(';');
                 document.getElementById('generated-url').textContent = finalUrl;
+                document.getElementById('copy-url-btn').disabled = false;
+                document.getElementById('copy-success').style.display = 'none';
             }
 
-
+            function copyGeneratedUrl() {
+                const url = document.getElementById('generated-url').textContent;
+                if (!url || url === "Nessuna playlist valida inserita." || url === "L'URL apparirà qui...") {
+                    return;
+                }
+                navigator.clipboard.writeText(url).then(function() {
+                    document.getElementById('copy-success').style.display = 'block';
+                    setTimeout(function() {
+                        document.getElementById('copy-success').style.display = 'none';
+                    }, 1200);
+                });
+            }
         </script>
     </body>
     </html>
