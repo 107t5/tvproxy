@@ -1629,7 +1629,7 @@ def url_builder():
                     return;
                 }
 
-                const finalUrl = serverAddress + '/proxy?' + definitions.join(';');
+                const finalUrl = serverAddress + '/proxy?url=' + definitions.join('&');
                 document.getElementById('generated-url').textContent = finalUrl;
                 document.getElementById('copy-url-btn').disabled = false;
                 document.getElementById('copy-success').style.display = 'none';
@@ -1958,116 +1958,143 @@ def proxy():
         return proxy_single_playlist()
 
 def proxy_playlist_combiner():
-    """Gestisce la combinazione di multiple playlist"""
+    """
+    Supporta:
+    /proxy?url=https://site1/playlist.m3u               # 1 url
+    /proxy?url=https://site1/playlist.m3u&https://site2/playlist.m3u   # N url in un solo 'url='
+    """
+    import requests
+    from flask import Response, request
+    import logging
+    from urllib.parse import unquote, quote
+    import json
+
     try:
-        query_string = request.query_string.decode('utf-8')
-        app.logger.info(f"Query string: {query_string}")
+        server_host = request.host
 
-        if not query_string:
-            return "Query string mancante", 400
+        # Quando chiami con /proxy?url=https://site1/playlist.m3u&https://site2/playlist.m3u
+        # request.args['url'] prende SOLO la prima url, ma request.query_string le mostra tutte!
+        # Quindi bisogna parsare la query manualmente.
+        query_string = request.query_string.decode('utf-8')  # esempio: 'url=https://site1/playlist.m3u&https://site2/playlist.m3u'
 
-        playlist_definitions = query_string.split(';')
-        app.logger.info(f"Avvio proxy combiner per {len(playlist_definitions)} playlist")
+        # Trova il contenuto dopo 'url=' e splitta per '&https'
+        urls = []
+        if query_string.startswith('url='):
+            # Rimuovi il prefisso 'url='
+            url_block = query_string[4:]
+            # Ricompone '&https' nel formato originario
+            # Ogni URL comincia con 'https'
+            parts = url_block.split('&https:')
+            if parts:
+                # Rimetti il 'https:' tolto dallo split
+                urls = ['https:' + p if i > 0 else p for i, p in enumerate(parts)]
+                urls = [unquote(u) for u in urls if u]  # url decode
+            else:
+                urls = [unquote(url_block)]
+        else:
+            return "Parametro url non trovato", 400
+
+        # Pulisci le url
+        urls = [u.strip() for u in urls if u.strip().startswith('http')]
+        if not urls:
+            return "Nessuna URL valida trovata", 400
+
+        logging.info(f"Elaboro {len(urls)} playlist: {urls}")
 
         def generate_combined_playlist():
-            first_playlist_header_handled = False # Tracks if the main #EXTM3U header context is done
-            total_bytes_yielded = 0
-            log_interval_bytes = 10 * 1024 * 1024 # Log every 10MB
-            last_log_bytes_milestone = 0
+            first_header_written = False
 
-            for definition_idx, definition in enumerate(playlist_definitions):
-                if '&' not in definition:
-                    app.logger.warning(f"[{definition_idx}] Skipping invalid playlist definition (manca '&'): {definition}")
-                    yield f"# SKIPPED Invalid Definition: {definition}\n"
-                    continue
-
-                parts = definition.split('&', 1)
-                creds_part, playlist_url_str = parts
-                
-                api_password = None
-                base_url_part = creds_part
-
-                # Heuristics to distinguish domain:port or scheme:// from domain:password
-                if ':' in creds_part:
-                    possible_base, possible_pass = creds_part.rsplit(':', 1)
-                    
-                    # A password is assumed if the part after the last colon is not a port (all digits)
-                    # and does not start with '//' (which would mean we split a URL scheme like http://)
-                    if not possible_pass.startswith('//') and not possible_pass.isdigit():
-                        base_url_part = possible_base
-                        api_password = possible_pass
-                
-                if api_password is not None:
-                    app.logger.info(f"  [{definition_idx}] Base URL: {base_url_part}, Password: {'*' * len(api_password)}")
-                else:
-                    # Nessuna password fornita (o la parte dopo ':' era una porta/scheme)
-                    app.logger.info(f"  [{definition_idx}] Base URL: {base_url_part}, Modalità senza password.")
-
-                base_url_part = base_url_part.rstrip('/')
-                app.logger.info(f"[{definition_idx}] Processing Playlist (streaming): {playlist_url_str}")
-
-                current_playlist_had_lines = False
-                first_line_of_this_segment = True
-                lines_processed_for_current_playlist = 0
+            for idx, playlist_url in enumerate(urls):
+                logging.info(f"[{idx}] Processing: {playlist_url}")
                 try:
-                    downloaded_lines_iter = download_m3u_playlist_streaming(playlist_url_str)
-                    app.logger.info(f"  [{definition_idx}] Download stream initiated for {playlist_url_str}")
-                    rewritten_lines_iter = rewrite_m3u_links_streaming(
-                        downloaded_lines_iter, base_url_part, api_password
-                    )
+                    resp = requests.get(playlist_url, timeout=15, headers={'User-Agent': 'Mozilla/5.0'})
+                    resp.raise_for_status()
+                    lines = resp.text.splitlines()
                     
-                    for line in rewritten_lines_iter:
-                        current_playlist_had_lines = True
-                        is_extm3u_line = line.strip().startswith('#EXTM3U')
-                        lines_processed_for_current_playlist += 1
-
-                        if not first_playlist_header_handled: # Still in the context of the first playlist's header
-                            yield line
-                            if is_extm3u_line:
-                                first_playlist_header_handled = True  # Main header yielded
+                    current_stream_headers_params = []
+                    
+                    for line in lines:
+                        orig_line = line.strip()
+                        
+                        if orig_line == "#EXTM3U":
+                            if not first_header_written:
+                                yield "#EXTM3U\n"
+                                first_header_written = True
+                            continue
                             
-                            line_bytes = len(line.encode('utf-8', 'replace')) # Use 'replace' for safety
-                            total_bytes_yielded += line_bytes
+                        # Gestione #EXTHTTP
+                        elif orig_line.startswith('#EXTHTTP:'):
+                            try:
+                                json_str = orig_line.split(':', 1)[1].strip()
+                                headers_dict = json.loads(json_str)
+                                for key, value in headers_dict.items():
+                                    encoded_key = quote(quote(key))
+                                    encoded_value = quote(quote(str(value)))
+                                    current_stream_headers_params.append(f"h_{encoded_key}={encoded_value}")
+                            except Exception as e:
+                                logging.error(f"Errore nel parsing di #EXTHTTP '{orig_line}': {e}")
+                            yield orig_line + '\n'
                             
-                            if total_bytes_yielded // log_interval_bytes > last_log_bytes_milestone:
-                                last_log_bytes_milestone = total_bytes_yielded // log_interval_bytes
-                                app.logger.info(f"ℹ️ [{definition_idx}] Total data yielded: {total_bytes_yielded / (1024*1024):.2f} MB. Current playlist lines: {lines_processed_for_current_playlist}")
-
-                            if len(line) > 10000: 
-                                app.logger.warning(f"⚠️ [{definition_idx}] VERY LONG LINE encountered (length={len(line)}, lines in current playlist={lines_processed_for_current_playlist}): {line[:100]}...")
-
-
-                        else: # Main header already handled (or first playlist didn't have one)
-                            if first_line_of_this_segment and is_extm3u_line:
-                                # Skip #EXTM3U if it's the first line of a subsequent segment
-                                pass
+                        # Gestione #EXTVLCOPT
+                        elif orig_line.startswith('#EXTVLCOPT:'):
+                            try:
+                                options_str = orig_line.split(':', 1)[1].strip()
+                                for opt_pair in options_str.split(','):
+                                    opt_pair = opt_pair.strip()
+                                    if '=' in opt_pair:
+                                        key, value = opt_pair.split('=', 1)
+                                        key = key.strip()
+                                        value = value.strip().strip('"')
+                                        
+                                        header_key = None
+                                        if key.lower() == 'http-user-agent':
+                                            header_key = 'User-Agent'
+                                        elif key.lower() == 'http-referer':
+                                            header_key = 'Referer'
+                                        elif key.lower() == 'http-cookie':
+                                            header_key = 'Cookie'
+                                        elif key.lower() == 'http-header':
+                                            full_header_value = value
+                                            if ':' in full_header_value:
+                                                header_name, header_val = full_header_value.split(':', 1)
+                                                header_key = header_name.strip()
+                                                value = header_val.strip()
+                                            else:
+                                                logging.warning(f"Malformed http-header option in EXTVLCOPT: {opt_pair}")
+                                                continue
+                                        
+                                        if header_key:
+                                            encoded_key = quote(quote(header_key))
+                                            encoded_value = quote(quote(value))
+                                            current_stream_headers_params.append(f"h_{encoded_key}={encoded_value}")
+                                        
+                            except Exception as e:
+                                logging.error(f"Errore nel parsing di #EXTVLCOPT '{orig_line}': {e}")
+                            yield orig_line + '\n'
+                            
+                        # Gestione URL dei stream
+                        elif orig_line.startswith("http"):
+                            if 'pluto.tv' in orig_line.lower():
+                                yield orig_line + '\n'
                             else:
-                                yield line
-                        first_line_of_this_segment = False
-
-                        # This block for logging and length check was duplicated, ensure it's correctly placed for all yielded lines
-                        if first_playlist_header_handled: # If not the first header part, calculate bytes and log here too
-                            line_bytes = len(line.encode('utf-8', 'replace'))
-                            total_bytes_yielded += line_bytes
-                            if total_bytes_yielded // log_interval_bytes > last_log_bytes_milestone:
-                                last_log_bytes_milestone = total_bytes_yielded // log_interval_bytes
-                                app.logger.info(f"ℹ️ [{definition_idx}] Total data yielded: {total_bytes_yielded / (1024*1024):.2f} MB. Current playlist lines: {lines_processed_for_current_playlist}")
-                            if len(line) > 10000:
-                                app.logger.warning(f"⚠️ [{definition_idx}] VERY LONG LINE encountered (length={len(line)}, lines in current playlist={lines_processed_for_current_playlist}): {line[:100]}...")
-
+                                encoded_line = quote(orig_line, safe='')
+                                headers_query_string = ""
+                                if current_stream_headers_params:
+                                    headers_query_string = "%26" + "%26".join(current_stream_headers_params)
+                                
+                                new_url = f"http://{server_host}/proxy/m3u?url={encoded_line}{headers_query_string}"
+                                yield new_url + '\n'
+                            
+                            # Reset headers per il prossimo stream
+                            current_stream_headers_params = []
+                        else:
+                            yield orig_line + '\n'
+                            
                 except Exception as e:
-                    app.logger.error(f"💥 [{definition_idx}] Error processing playlist {playlist_url_str} (after ~{lines_processed_for_current_playlist} lines yielded for it): {str(e)}")
-                    yield f"# ERROR processing playlist {playlist_url_str}: {str(e)}\n"
-                
-                app.logger.info(f"✅ [{definition_idx}] Finished processing playlist {playlist_url_str}. Lines processed in this segment: {lines_processed_for_current_playlist}")
-                if current_playlist_had_lines and not first_playlist_header_handled:
-                    # This playlist (which was effectively the first with content) finished,
-                    # and no #EXTM3U was found to mark as the main header.
-                    # Mark header as handled so subsequent playlists skip their #EXTM3U.
-                    first_playlist_header_handled = True
-        
-        app.logger.info(f"🏁 Avvio streaming del contenuto combinato... (Total definitions: {len(playlist_definitions)})")
-        # The final total_bytes_yielded will be known only if the generator completes fully.
+                    logging.error(f" [!{idx}] Error: {str(e)}")
+                    yield f"# ERROR downloading {playlist_url}: {str(e)}\n"
+
+        logging.info("Streaming combinazione playlist...")
         return Response(
             generate_combined_playlist(),
             mimetype='application/vnd.apple.mpegurl',
@@ -2076,9 +2103,9 @@ def proxy_playlist_combiner():
                 'Access-Control-Allow-Origin': '*'
             }
         )
-        
+
     except Exception as e:
-        app.logger.error(f"ERRORE GENERALE: {str(e)}")
+        logging.error(f"ERRORE GENERALE: {str(e)}")
         import traceback
         traceback.print_exc()
         return f"Errore: {str(e)}", 500
