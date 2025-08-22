@@ -186,16 +186,16 @@ docker run -d -p 7860:7860 \
 
 ```bash
 pkg update && pkg upgrade
-pkg install git python nano -y
+pkg install git python nano libffi fftw binutils -y 
 
 git clone https://github.com/nzo66/tvproxy.git
 cd tvproxy
 pip install -r requirements.txt
 
-mv env.example .env
-nano .env
+mv env.example .env (opzionale)
+nano .env (opzionale)
 
-`adesso modifica il file env`
+`adesso modifica il file env` (opzionale)
 
 gunicorn app:app -w 4 --worker-class gevent -b 0.0.0.0:7860
 ```
