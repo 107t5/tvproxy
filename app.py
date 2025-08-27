@@ -1164,7 +1164,8 @@ def resolve_m3u8_link(url, headers=None):
                 else:
                     raise
 
-        iframes = re.findall(r'<a[^>]*href="([^"]+)"[^>]*>\s*<button[^>]*>\s*Player\s*2\s*</button>', response.text)
+        # Extract Player 2 button link
+        iframes = re.findall(r'<a[^>]*href="([^"]+)"[^>]*>\s*<button[^>]*>\s*Player[^2]*2\s*</button>', response.text)
         if not iframes:
             app.logger.error("Nessun link Player 2 trovato")
             return {"resolved_url": None, "headers": current_headers}
@@ -1182,92 +1183,201 @@ def resolve_m3u8_link(url, headers=None):
         response = requests.get(url2, headers=final_headers_for_resolving, timeout=15, proxies=get_proxy_for_url(url2), verify=VERIFY_SSL)
         response.raise_for_status()
 
-        iframes = re.findall(r'iframe src="([^"]*)', response.text)
-        if not iframes:
+        # Get the iframe URL
+        iframe_matches = re.findall(r'<iframe[^>]*src="([^"]*)"', response.text)
+        if not iframe_matches:
             app.logger.error("Nessun iframe trovato nella pagina Player 2")
             return {"resolved_url": None, "headers": current_headers}
 
-        iframe_url = iframes[0]
-        response = requests.get(iframe_url, headers=final_headers_for_resolving, timeout=15, proxies=get_proxy_for_url(iframe_url), verify=VERIFY_SSL)
+        iframe_url = iframe_matches[0].strip()
+        iframe_domain = urlparse(iframe_url).netloc
+        
+        # Create a session for cookies
+        session = requests.Session()
+        
+        # Setup headers to mimic browser request
+        iframe_headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Cache-Control': 'max-age=0',
+            'Connection': 'keep-alive',
+            'Host': iframe_domain,
+            'Referer': url2,
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1',
+            'Origin': urlparse(url2).scheme + "://" + urlparse(url2).netloc,
+            'sec-ch-ua': '"Chromium";v="123", "Google Chrome";v="123", "Not:A-Brand";v="8"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"'
+        }
+        
+        # First make a HEAD request to get any cookies
+        try:
+            session.head(iframe_url, headers=iframe_headers, timeout=15, proxies=get_proxy_for_url(iframe_url), verify=VERIFY_SSL)
+        except:
+            pass
+            
+        # Make the actual GET request
+        response = requests.get(iframe_url, headers=iframe_headers, timeout=15, proxies=get_proxy_for_url(iframe_url), verify=VERIFY_SSL)
         response.raise_for_status()
-
         iframe_content = response.text
 
 
+            # --- Extract channel key and BUNDLE ---
+        channel_key = None
+        bundle_json = None
+        auth_headers = None  # Initialize auth_headers at a higher scope
+        
         try:
-            # --- NUOVA LOGICA (BUNDLE) ---
-            bundle_b64 = re.findall(r'const BUNDLE = "([^"]+)"', iframe_content)
-            if bundle_b64:
-                app.logger.info("Rilevata nuova struttura BUNDLE per DaddyLive.")
-                bundle_json_str = base64.b64decode(bundle_b64[0]).decode('utf-8')
-                parts_b64 = json.loads(bundle_json_str)
-                parts = {k: base64.b64decode(v).decode('utf-8') for k, v in parts_b64.items()}
-                channel_key = re.findall(r'const CHANNEL_KEY = "([^"]+)"', iframe_content)[0]
-                app.logger.info(f"Parametri estratti da BUNDLE: channel_key={channel_key}")
-                auth_host = parts['b_host']
-                auth_php = parts['b_script']
-                auth_ts = parts['b_ts']
-                auth_rnd = parts['b_rnd']
-                auth_sig = quote_plus(parts['b_sig'])
+            # First look for script tags with content
+            script_contents = re.findall(r'<script[^>]*>(.*?)</script>', iframe_content, re.DOTALL)
+            for script in script_contents:
+                # Look for CHANNEL_KEY assignment
+                channel_key_match = re.search(r'CHANNEL_KEY\s*=\s*[\'"](.+?)[\'"]', script)
+                if channel_key_match:
+                    channel_key = channel_key_match.group(1)
+                
+                # Look for XJZ variable containing base64 encoded params
+                xjz_match = re.search(r'const\s+XJZ\s*=\s*[\'"]([^"\']+)[\'"]', script)
+                if xjz_match:
+                    try:
+                        xjz_b64 = xjz_match.group(1)
+                        bundle_json = json.loads(base64.b64decode(xjz_b64).decode('utf-8'))
+                    except Exception as e:
+                        app.logger.error(f"Error decoding XJZ: {e}")
+
+            # Try direct BUNDLE extraction if XJZ wasn't found
+            if not bundle_json:
+                bundle_match = re.search(r'BUNDLE\s*=\s*[\'"](.+?)[\'"]', iframe_content)
+                if bundle_match:
+                    try:
+                        bundle_b64 = bundle_match.group(1)
+                        bundle_json = json.loads(base64.b64decode(bundle_b64).decode('utf-8'))
+                    except Exception as e:
+                        app.logger.error(f"Impossibile decodificare BUNDLE: {str(e)}")
+
+            # If no channel key yet, try alternative pattern
+            if not channel_key:
+                channel_key_alt = re.search(r'channelKey\s*=\s*[\'"](.+?)[\'"]', iframe_content)
+                if channel_key_alt:
+                    channel_key = channel_key_alt.group(1)
+                    app.logger.info(f"Trovato channelKey alternativo: {channel_key}")
+            
+            # Fail if no channel key found
+            if not channel_key:
+                raise ValueError("Channel key non trovata nel codice")
+            
+            # Extract auth parameters either from BUNDLE or direct code
+            auth_params = {}
+            if bundle_json:
+                app.logger.info("Usando parametri dal BUNDLE/XJZ")
+                # Try both prefixes since format can vary
+                prefixes = ['b_', '']  # Check both with and without 'b_' prefix
+                for prefix in prefixes:
+                    try:
+                        host_b64 = bundle_json.get(f'{prefix}host')
+                        if host_b64:
+                            auth_params['host'] = base64.b64decode(host_b64).decode('utf-8')
+                            # Make sure to use 'auth.php' instead of 'a.php'
+                            script_decoded = base64.b64decode(bundle_json.get(f'{prefix}script', '')).decode('utf-8')
+                            auth_params['script'] = 'auth.php' if script_decoded.endswith('a.php') else script_decoded
+                            auth_params['ts'] = base64.b64decode(bundle_json.get(f'{prefix}ts', '')).decode('utf-8')
+                            auth_params['rnd'] = base64.b64decode(bundle_json.get(f'{prefix}rnd', '')).decode('utf-8')
+                            auth_params['sig'] = quote_plus(base64.b64decode(bundle_json.get(f'{prefix}sig', '')).decode('utf-8'))
+                            break
+                    except Exception as e:
+                        continue
+                
+                if 'host' not in auth_params:
+                    raise ValueError("Impossibile estrarre parametri dal BUNDLE/XJZ")
             else:
-                # --- VECCHIA LOGICA (FALLBACK) ---
-                app.logger.info("Struttura BUNDLE non trovata, fallback alla vecchia logica.")
-                channel_key = re.findall(r'(?s) channelKey = \"([^"]*)', iframe_content)[0]
-                auth_ts_b64 = re.findall(r'(?s)c = atob\("([^"]*)', iframe_content)[0]
-                auth_ts = base64.b64decode(auth_ts_b64).decode('utf-8')
-                auth_rnd_b64 = re.findall(r'(?s)d = atob\("([^"]*)', iframe_content)[0]
-                auth_rnd = base64.b64decode(auth_rnd_b64).decode('utf-8')
-                auth_sig_b64 = re.findall(r'(?s)e = atob\("([^"]*)', iframe_content)[0]
-                auth_sig_raw = base64.b64decode(auth_sig_b64).decode('utf-8')
-                auth_sig = quote_plus(auth_sig_raw)
-                auth_host_b64 = re.findall(r'(?s)a = atob\("([^"]*)', iframe_content)[0]
-                auth_host = base64.b64decode(auth_host_b64).decode('utf-8')
-                auth_php_b64 = re.findall(r'(?s)b = atob\("([^"]*)', iframe_content)[0]
-                auth_php = base64.b64decode(auth_php_b64).decode('utf-8')
-                app.logger.info(f"Parametri estratti con vecchia logica: channel_key={channel_key}")
+                app.logger.info("Usando estrazione diretta dei parametri")
+                # Extract embedded b64 values - 2025 format
+                params_map = {
+                    'host': (r'const\s*host\s*=\s*[\'"]([^"\']+)[\'"]|authHost\s*=\s*[\'"]([^"\']+)[\'"]|const\s+AUTH_HOST\s*=\s*[\'"]([^"\']+)[\'"]|const\s+a\s*=\s*[\'"]([^"\']+)[\'"]', 'auth host'),
+                    'script': (r'const\s*script\s*=\s*[\'"]([^"\']+)[\'"]|authScript\s*=\s*[\'"]([^"\']+)[\'"]|const\s+AUTH_SCRIPT\s*=\s*[\'"]([^"\']+)[\'"]|const\s+b\s*=\s*[\'"]([^"\']+)[\'"]', 'auth script'),
+                    'ts': (r'const\s*ts\s*=\s*[\'"]([^"\']+)[\'"]|authTs\s*=\s*[\'"]([^"\']+)[\'"]|const\s+AUTH_TS\s*=\s*[\'"]([^"\']+)[\'"]|const\s+c\s*=\s*[\'"]([^"\']+)[\'"]', 'timestamp'),
+                    'rnd': (r'const\s*rnd\s*=\s*[\'"]([^"\']+)[\'"]|authRnd\s*=\s*[\'"]([^"\']+)[\'"]|const\s+AUTH_RND\s*=\s*[\'"]([^"\']+)[\'"]|const\s+d\s*=\s*[\'"]([^"\']+)[\'"]', 'random'),
+                    'sig': (r'const\s*sig\s*=\s*[\'"]([^"\']+)[\'"]|authSig\s*=\s*[\'"]([^"\']+)[\'"]|const\s+AUTH_SIG\s*=\s*[\'"]([^"\']+)[\'"]|const\s+e\s*=\s*[\'"]([^"\']+)[\'"]', 'signature')
+                }
+                
+                for param_key, (pattern, desc) in params_map.items():
+                    param_match = re.search(pattern, iframe_content)
+                    if param_match:
+                        try:
+                            # Take first non-None group (either new format or legacy)
+                            value = next(g for g in param_match.groups() if g is not None)
+                            
+                            # Check if value looks like base64
+                            if re.match(r'^[A-Za-z0-9+/]*={0,2}$', value):
+                                try:
+                                    decoded = base64.b64decode(value).decode('utf-8')
+                                    value = decoded
+                                except Exception:
+                                    pass
+                            
+                            auth_params[param_key] = quote_plus(value) if param_key == 'sig' else value
+                        except:
+                            raise ValueError(f"Impossibile decodificare {desc}")
+                    else:
+                        raise ValueError(f"Parametro {desc} non trovato")            # Set up headers for authentication
+            auth_headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Connection': 'keep-alive',
+                'Referer': iframe_url,
+                'Origin': urlparse(iframe_url).scheme + "://" + urlparse(iframe_url).netloc,
+            }
+            
+            # Make auth request
+            auth_url = f"{auth_params['host']}{auth_params['script']}?channel_id={channel_key}&ts={auth_params['ts']}&rnd={auth_params['rnd']}&sig={auth_params['sig']}"
+            app.logger.info(f"URL autenticazione: {auth_url}")
+            
+            auth_response = requests.get(auth_url, headers=auth_headers, timeout=15, proxies=get_proxy_for_url(auth_url), verify=VERIFY_SSL)
+            auth_response.raise_for_status()
+            app.logger.info(f"Autenticazione completata, status: {auth_response.status_code}")
+            
+            # Get server key from lookup endpoint
+            iframe_domain = urlparse(iframe_url).netloc
+            lookup_url = f"https://{iframe_domain}/server_lookup.php?channel_id={channel_key}"
+            app.logger.info(f"Richiesta server key da: {lookup_url}")
+            
+            lookup_response = requests.get(
+                lookup_url,
+                headers=auth_headers,
+                timeout=15,
+                proxies=get_proxy_for_url(lookup_url),
+                verify=VERIFY_SSL
+            )
+            lookup_response.raise_for_status()
+            server_data = lookup_response.json()
+            
+            if 'server_key' not in server_data:
+                raise ValueError("Server key non trovata nella risposta")
+                
+            server_key = server_data['server_key']
+            app.logger.info(f"Server key ottenuta: {server_key}")
+            
+            # Build the final M3U8 URL based on server key
+            if server_key == 'top1/cdn':
+                clean_m3u8_url = f'https://top1.newkso.ru/top1/cdn/{channel_key}/mono.m3u8'
+            else:
+                clean_m3u8_url = f'https://{server_key}new.newkso.ru/{server_key}/{channel_key}/mono.m3u8'
 
-        except (IndexError, Exception) as e:
-            app.logger.error(f"Errore estrazione parametri DaddyLive: {e}")
+        except Exception as e:
+            app.logger.error(f"Errore nell'estrazione dei parametri: {str(e)}")
             return {"resolved_url": None, "headers": current_headers}
-
-        # Use the full iframe_url as Referer for all subsequent requests
-        iframe_domain = urlparse(iframe_url).netloc
-        referer_full = iframe_url
-        origin_full = f'https://{iframe_domain}'
-        chrome_ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-        strict_headers = {
-            'User-Agent': chrome_ua,
-            'Referer': referer_full,
-            'Origin': origin_full,
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Connection': 'keep-alive'
-        }
-
-        # Use these headers for all DaddyLive requests after iframe extraction
-        auth_url = f'{auth_host}{auth_php}?channel_id={channel_key}&ts={auth_ts}&rnd={auth_rnd}&sig={auth_sig}'
-        auth_response = requests.get(auth_url, headers=strict_headers, timeout=15, proxies=get_proxy_for_url(auth_url), verify=VERIFY_SSL)
-        auth_response.raise_for_status()
-
-        # Get the server_key
-        server_lookup_url = f"https://{iframe_domain}/server_lookup.php?channel_id={channel_key}"
-        app.logger.info(f"Recupero della server_key da: {server_lookup_url}")
-        lookup_response = requests.get(server_lookup_url, headers=strict_headers, timeout=15, proxies=get_proxy_for_url(server_lookup_url), verify=VERIFY_SSL)
-        lookup_response.raise_for_status()
-        server_data = lookup_response.json()
-        server_key = server_data['server_key']
-        app.logger.info(f"Ottenuta server_key: {server_key}")
-
-        # Build the final M3U8 URL
-        if server_key == 'top1/cdn':
-            clean_m3u8_url = f'https://top1.newkso.ru/top1/cdn/{channel_key}/mono.m3u8'
-        else:
-            clean_m3u8_url = f'https://{server_key}new.newkso.ru/{server_key}/{channel_key}/mono.m3u8'
         app.logger.info(f"URL M3U8 costruito: {clean_m3u8_url}")
 
         return {
             "resolved_url": clean_m3u8_url,
-            "headers": {**final_headers, **strict_headers}
+            "headers": {**final_headers, **auth_headers}
         }
 
     except Exception as e:
