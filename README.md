@@ -188,7 +188,7 @@ http://<server-ip>:7860/proxy?url=<URL_STREAM>
 http://server:7860/proxy?url=https://example.com/stream.m3u8
 
 # Playlist IPTV
-http://server:7860/proxy?url=https://iptv-provider.com/playlist.m3u
+http://server:7860/playlist?url=https://iptv-provider.com/playlist.m3u
 
 # Stream con headers personalizzati
 http://server:7860/proxy?url=https://stream.com/video.m3u8&h_user-agent=VLC&h_referer=https://site.com
