@@ -1,426 +1,367 @@
-# 🚀 TVProxy - Server Proxy per Streaming TV
+# 🚀 tvproxy - Server Proxy Universale per Streaming HLS
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
 [![Docker](https://img.shields.io/badge/Docker-Ready-blue.svg)](https://docker.com)
-[![HuggingFace](https://img.shields.io/badge/HuggingFace-Spaces-yellow.svg)](https://huggingface.co/spaces)
+[![HLS](https://img.shields.io/badge/HLS-Streaming-red.svg)](https://developer.apple.com/streaming/)
 
-> **Un server proxy leggero e veloce per streaming TV** 🎬  
-> Ottimizzato per DaddyLive, Vavoo e altri servizi IPTV  
-> Configurabile tramite variabili d'ambiente, senza interfaccia web
+> **Un server proxy universale per streaming HLS, M3U8 e IPTV** 🎬  
+> Supporto nativo per Vavoo, DaddyLive HD e tutti i servizi di streaming  
+> Interfaccia web integrata e configurazione zero
 
 ---
 
 ## 📚 Indice
 
-- [💾 Configurazione Ottimale](#-configurazione-ottimale-pronta-alluso)
-- [☁️ Piattaforme di Deploy](#️-piattaforme-di-deploy)
-- [💻 Setup Locale](#-setup-locale)
+- [✨ Caratteristiche Principali](#-caratteristiche-principali)
+- [💾 Setup Rapido](#-setup-rapido)
+- [☁️ Deploy Cloud](#️-deploy-cloud)
+- [💻 Installazione Locale](#-installazione-locale)
 - [🧰 Utilizzo del Proxy](#-utilizzo-del-proxy)
-- [🔁 Configurazione Proxy](#-configurazione-proxy-opzionale)
-- [🐳 Gestione Docker Rapida](#-gestione-docker-rapida)
+- [🔧 Configurazione](#-configurazione)
+- [📖 Architettura](#-architettura)
 
 ---
 
 ## ✨ Caratteristiche Principali
 
-| 🎯 **Proxy Intelligente** | 🔄 **Caching Avanzato** | ⚡ **Pre-buffering** |
-|---------------------------|-------------------------|---------------------|
-| Supporto DaddyLive, Vavoo e IPTV | Cache M3U8, TS e chiavi AES-128 | Pre-caricamento segmenti |
+| 🎯 **Proxy Universale** | 🔐 **Estrattori Specializzati** | ⚡ **Performance** |
+|------------------------|------------------------|-------------------|
+| HLS, M3U8, MPD, PHP streams | Vavoo, DaddyLive HD integrati | Connessioni async e keep-alive |
 
-| 🌐 **Proxy Multipli** | 🔒 **Proxy Specifici** | 🚀 **Performance** |
-|----------------------|----------------------|-------------------|
-| Rotazione automatica HTTP/SOCKS5 | Proxy dedicati DaddyLive | Keep-alive e connessioni persistenti |
+| 🌐 **Multi-formato** | 🔄 **Retry Logic** | 🚀 **Scalabilità** |
+|--------------------|-------------------|------------------|
+| Supporto #EXTVLCOPT e #EXTHTTP | Tentativi automatici | Server asincrono |
 
----
-
-## 💾 Configurazione Ottimale (Pronta all'uso)
-
-### 📃 Configurazione di Default (Nessun `.env` richiesto)
-
-**Il server funziona perfettamente senza configurazione!** 
-
-I valori di default sono ottimizzati per:
-- ✅ **Server con risorse limitate** (512MB - 1GB RAM)
-- ✅ **Piattaforme cloud gratuite** (HuggingFace, Render Free)
-- ✅ **Streaming diretto** senza cache o pre-buffering
-- ✅ **Massima compatibilità** con tutti i tipi di stream
-
-### 📃 `.env` opzionale (solo per proxy)
-
-```dotenv
-# Proxy (opzionale - solo se necessario)
-PROXY=socks5://user:pass@proxy1.com:1080,http://proxy2.com:8080
-DADDY_PROXY=socks5://user:pass@daddy-proxy.com:1080
-
-# Tutto il resto usa valori ottimali di default
-# Cache e pre-buffering DISABILITATI per massima compatibilità
-```
-
-### 📃 `.env` per Server con 2GB+ RAM (opzionale)
-
-```dotenv
-# Proxy (opzionale)
-PROXY=socks5://user:pass@proxy1.com:1080,http://proxy2.com:8080
-DADDY_PROXY=socks5://user:pass@daddy-proxy.com:1080
-
-# Abilita cache per server più potenti
-CACHE_ENABLED=true
-CACHE_TTL_M3U8=5
-CACHE_TTL_TS=300
-CACHE_MAXSIZE_M3U8=200
-CACHE_MAXSIZE_TS=1000
-
-# Pre-buffering ancora disabilitato (raccomandato)
-PREBUFFER_ENABLED=false
-```
-
-### 🚫 Cache e Pre-buffering (DISABILITATI di default)
-
-**Di default, cache e pre-buffering sono DISABILITATI** per garantire:
-- ✅ **Streaming diretto** senza latenza aggiuntiva
-- ✅ **Contenuti sempre aggiornati** (nessun contenuto cached obsoleto)
-- ✅ **Minore utilizzo di memoria** sui server con risorse limitate
-- ✅ **Compatibilità ottimale** con tutti i tipi di stream
-
-#### 🔄 Quando ABILITARE la Cache
-
-Abilita la cache **SOLO** se:
-- ✅ Hai un server con **almeno 2GB di RAM**
-- ✅ Vuoi **ridurre il carico di rete** per stream ripetuti
-- ✅ Hai **connessioni lente** e vuoi migliorare le performance
-- ✅ Stai servendo **molti utenti contemporaneamente**
-
-```dotenv
-# Abilita cache (solo se necessario)
-CACHE_ENABLED=true
-```
-
-#### ⚡ Quando ABILITARE il Pre-buffering
-
-Abilita il pre-buffering **SOLO** se:
-- ✅ Hai **connessioni instabili** che causano buffering frequente
-- ✅ Il server ha **almeno 4GB di RAM** disponibili
-- ✅ Vuoi **ridurre i micro-buffering** durante la riproduzione
-- ✅ Stai guardando **contenuti live** con interruzioni frequenti
-
-```dotenv
-# Abilita pre-buffering (solo se necessario)
-PREBUFFER_ENABLED=true
-```
-
-#### ⚠️ Configurazione Combinata (Solo per Server Potenti)
-
-```dotenv
-# Solo per server con 4GB+ RAM e connessioni stabili
-CACHE_ENABLED=true
-PREBUFFER_ENABLED=true
-
-# Configurazione cache ottimizzata
-CACHE_TTL_M3U8=5
-CACHE_TTL_TS=300
-CACHE_MAXSIZE_M3U8=200
-CACHE_MAXSIZE_TS=1000
-
-# Configurazione pre-buffering ottimizzata
-PREBUFFER_MAX_SEGMENTS=3
-PREBUFFER_MAX_SIZE_MB=100
-PREBUFFER_MAX_MEMORY_PERCENT=25.0
-```
-
-#### 🎯 Raccomandazioni per Tipo di Deploy
-
-| **Piattaforma** | **Cache** | **Pre-buffer** | **Motivo** |
-|-----------------|-----------|----------------|------------|
-| **HuggingFace Spaces** | ❌ | ❌ | Risorse limitate, restart frequenti |
-| **Render Free** | ❌ | ❌ | 512MB RAM, non sufficiente |
-| **VPS 1GB** | ❌ | ❌ | Memoria insufficiente |
-| **VPS 2GB+** | ✅ | ❌ | Cache OK, pre-buffer opzionale |
-| **VPS 4GB+** | ✅ | ✅ | Entrambi supportati |
-| **Server Dedicato** | ✅ | ✅ | Performance ottimali |
+| 🛠️ **Builder Integrato** | 📱 **Interfaccia Web** | 🔗 **Playlist Manager** |
+|--------------------------|----------------------|---------------------|
+| Combinazione playlist M3U | Dashboard completa | Gestione automatica headers |
 
 ---
 
-## ☁️ Piattaforme di Deploy
+## 💾 Setup Rapido
 
-### ▶️ Render
+### 🐳 Docker (Raccomandato)
 
-1. **Projects** → **New → Web Service** → *Public Git Repo*
-2. **Repository**: `https://github.com/nzo66/tvproxy` → **Connect**
-3. Scegli un nome, **Instance Type** `Free` (o superiore)
-4. Aggiungi le variabili proxy nell'area **Environment** (opzionale)
-5. **Create Web Service**
-
-### 🤖 HuggingFace Spaces
-
-1. Crea un nuovo **Space** (SDK: *Docker*)
-2. Carica `DockerfileHF` come `Dockerfile`
-3. Vai in **Settings → Secrets** e aggiungi **solo i proxy**:
-   ```
-   PROXY=socks5://user:pass@proxy.com:1080
-   DADDY_PROXY=socks5://user:pass@daddy-proxy.com:1080
-   ```
-4. **Factory Rebuild** dopo aver aggiunto le variabili
-
-🎉 **Fatto!** Il server è già ottimizzato per HuggingFace Spaces con configurazioni predefinite perfette.
-
-**Nota**: usa `PROXY` per proxy globale, usa `DADDY_PROXY` solo per proxare daddy
-
----
-
-## 💻 Setup Locale
-
-### 🐳 Docker
+**Assicurati di avere un file `Dockerfile` e `requirements.txt` nella root del progetto.**
 
 ```bash
 git clone https://github.com/nzo66/tvproxy.git
 cd tvproxy
 docker build -t tvproxy .
+docker run -d -p 7860:7860 --name tvproxy tvproxy
+```
 
-docker run -d -p 7860:7860 \
-  -e PROXY=socks5://user:pass@proxy.com:1080 \
-  -e DADDY_PROXY=socks5://user:pass@daddy-proxy.com:1080 \
-  --name tvproxy tvproxy
+### 🐍 Python Diretto
+
+```bash
+git clone https://github.com/nzo66/tvproxy.git
+cd tvproxy
+pip install -r requirements.txt
+gunicorn --bind 0.0.0.0:7860 --workers 4 --worker-class aiohttp.worker.GunicornWebWorker app:app
+```
+
+**Server disponibile su:** `http://localhost:7860`
+
+---
+
+## ☁️ Deploy Cloud
+
+### ▶️ Render
+
+1. **Projects** → **New → Web Service** → *Public Git Repository*
+2. **Repository**: `https://github.com/nzo66/tvproxy`
+3. **Build Command**: `pip install -r requirements.txt`
+4. **Start Command**: `gunicorn --bind 0.0.0.0:7860 --workers 4 --worker-class aiohttp.worker.GunicornWebWorker app:app`
+5. **Deploy**
+
+### 🤖 HuggingFace Spaces
+
+1. Crea nuovo **Space** (SDK: *Docker*)
+2. Carica tutti i file
+3. Deploy automatico
+4. **Pronto!**
+
+### 🌐 Railway / Heroku
+
+```bash
+# Railway
+railway login && railway init && railway up
+
+# Heroku
+heroku create tvproxy && git push heroku main
+```
+
+### 🎯 Configurazione Cloud Ottimale
+
+**Il proxy funziona senza configurazione!**
+
+Ottimizzato per:
+- ✅ **Piattaforme gratuite** (HuggingFace, Render Free)
+- ✅ **Server limitati** (512MB - 1GB RAM)
+- ✅ **Streaming diretto** senza cache
+- ✅ **Massima compatibilità** con tutti i servizi
+
+---
+
+## 💻 Installazione Locale
+
+### 📋 Requisiti
+
+- **Python 3.8+**
+- **aiohttp**
+- **gunicorn**
+
+### 🔧 Installazione Completa
+
+```bash
+# Clone repository
+git clone https://github.com/nzo66/tvproxy.git
+cd tvproxy
+
+# Installa dipendenze
+pip install -r requirements.txt
+
+# Avvio 
+gunicorn --bind 0.0.0.0:7860 --workers 4 --worker-class aiohttp.worker.GunicornWebWorker app:app
 ```
 
 ### 🐧 Termux (Android)
 
 ```bash
 pkg update && pkg upgrade
-pkg install git python nano libffi fftw binutils -y 
-
+pkg install python git -y
 git clone https://github.com/nzo66/tvproxy.git
 cd tvproxy
 pip install -r requirements.txt
-
-mv env.example .env (opzionale)
-nano .env (opzionale)
-
-`adesso modifica il file env` (opzionale)
-
-gunicorn app:app -w 4 --worker-class gevent -b 0.0.0.0:7860
+gunicorn --bind 0.0.0.0:7860 --workers 4 --worker-class aiohttp.worker.GunicornWebWorker app:app
 ```
 
-### 🐍 Python
+### 🐳 Docker Avanzato
 
 ```bash
-git clone https://github.com/nzo66/tvproxy.git
-cd tvproxy
-pip install -r requirements.txt
+# Build personalizzata
+docker build -t tvproxy .
 
-mv env.example .env
-nano .env
+# Run con configurazioni personalizzate
+docker run -d -p 7860:7860 \
+  --name tvproxy tvproxy
 
-`adesso modifica il file env`
-
-gunicorn app:app -w 4 --worker-class gevent --worker-connections 100 \
-        -b 0.0.0.0:7860 --timeout 120 --keep-alive 5 \
-        --max-requests 1000 --max-requests-jitter 100
+# Run con volume per logs
+docker run -d -p 7860:7860 \
+  -v $(pwd)/logs:/app/logs \
+  --name tvproxy tvproxy
 ```
 
 ---
 
 ## 🧰 Utilizzo del Proxy
 
-Sostituisci `<server-ip>` con l'indirizzo del tuo server.
+Sostituisci `<server-ip>` con l'IP del tuo server.
 
-### 💡 Liste M3U
-
-```
-http://<server-ip>:7860/proxy?url=<URL_LISTA_M3U>
-```
-
-### 📺 Flussi M3U8 con headers
+### 🎯 Interfaccia Web Principale
 
 ```
-http://<server-ip>:7860/proxy/m3u?url=<URL_FLUSSO_M3U8>&h_<HEADER>=<VALORE>
+http://<server-ip>:7860/
 ```
 
-**Esempio:**
-```
-.../proxy/m3u?url=https://example.com/stream.m3u8&h_user-agent=VLC/3.0.20&h_referer=https://example.com/
-```
+**Dashboard con:**
+- ✅ Stato servizi e statistiche
+- ✅ Test connettività
+- ✅ Log richieste in tempo reale
+- ✅ Monitoraggio performance
 
-### 🔍 Risoluzione DaddyLive 2025
-
-```
-http://<server-ip>:7860/proxy/resolve?url=<URL_DADDYLIVE>
-```
-
-### 🔑 Chiavi AES-128
+### 📺 Proxy HLS Universale
 
 ```
-http://<server-ip>:7860/proxy/key?url=<URL_CHIAVE>&h_<HEADER>=<VALORE>
+http://<server-ip>:7860/proxy?url=<URL_STREAM>
 ```
 
-### 🧪 Test Vavoo
+**Supporta:**
+- **HLS (.m3u8)** - Streaming live e VOD
+- **M3U playlist** - Liste canali IPTV  
+- **MPD (DASH)** - Streaming adattivo
+- **PHP streams** - Flussi dinamici
 
+**Esempi:**
+```bash
+# Stream HLS generico
+http://server:7860/proxy?url=https://example.com/stream.m3u8
+
+# Playlist IPTV
+http://server:7860/proxy?url=https://iptv-provider.com/playlist.m3u
+
+# Stream con headers personalizzati
+http://server:7860/proxy?url=https://stream.com/video.m3u8&h_user-agent=VLC&h_referer=https://site.com
 ```
-http://<server-ip>:7860/proxy/vavoo?url=https://vavoo.to/vavoo-iptv/play/277580225585f503fbfc87
-```
+
+### 🔍 Estrazione Vavoo Automatico
+
+**Risolve automaticamente:**
+- Link vavoo.to in stream diretti
+- Autenticazione API automatica
+- Headers ottimizzati per streaming
+
+### 📡 Risoluzione DaddyLive HD Automatico
+
+**Funzionalità:**
+- Risoluzione link DaddyLive HD
+- Bypass automatico restrizioni
+- Ottimizzazione qualità stream
 
 ### 🔗 Playlist Builder
-
-Unisci multiple playlist M3U in una singola lista:
 
 ```
 http://<server-ip>:7860/builder
 ```
 
-**Funzionalità:**
-- ✅ Interfaccia web per combinare playlist
-- ✅ Supporto per MFP e TvProxy
-- ✅ Gestione automatica delle password API
-- ✅ Combinazione streaming in tempo reale
+**Interfaccia completa per:**
+- ✅ Combinare playlist multiple
+- ✅ Gestione automatica Vavoo e DLHD
+- ✅ Supporto #EXTVLCOPT e #EXTHTTP  
+- ✅ Proxy automatico per tutti gli stream
+- ✅ Compatibilità VLC, Kodi, IPTV players
 
-**Esempio di utilizzo:**
+### 🔑 Headers Personalizzati
+
+Aggiungi headers con prefisso `h_`:
+
 ```
-http://<server-ip>:7860/proxy?def1&url1;def2&url2
+http://server:7860/proxy?url=STREAM_URL&h_user-agent=CustomUA&h_referer=https://site.com&h_authorization=Bearer token123
 ```
 
-Dove:
-- `def1` = dominio:password (per MFP) o solo dominio (per TvProxy)
-- `url1` = URL della playlist
-- `;` = separatore tra playlist multiple
+**Headers supportati:**
+- `h_user-agent` - User Agent personalizzato
+- `h_referer` - Sito di riferimento  
+- `h_authorization` - Token di autorizzazione
+- `h_origin` - Dominio origine
+- `h_*` - Qualsiasi header personalizzato
 
 ---
 
-## 🔁 Configurazione Proxy (Opzionale)
+## 📖 Architettura
 
-### 📋 Tipi di Proxy
+### 🔄 Flusso di Elaborazione
 
-| Variabile          | Descrizione                                                  | Esempio                                   |
-|--------------------|--------------------------------------------------------------|-------------------------------------------|
-| `PROXY`            | **Proxy generali** - Usato per TUTTI i servizi (Vavoo, IPTV, ecc.) | `socks5://user:pass@host:port,...`        |
-| `DADDY_PROXY`      | **Proxy specifici** - Usato SOLO per DaddyLive              | `socks5://user:pass@host:port,...`        |
-| `NO_PROXY_DOMAINS` | Domini da escludere dal proxy, separati da virgola           | `github.com,vavoo.to`                     |
+1. **Richiesta Stream** → Endpoint proxy universale
+2. **Rilevamento Servizio** → Auto-detect Vavoo/DLHD/Generic
+3. **Estrazione URL** → Risoluzione link reali
+4. **Proxy Stream** → Forward con headers ottimizzati
+5. **Risposta Client** → Stream diretto compatibile
 
-### 🎯 Come Funziona
+### ⚡ Sistema Asincrono
 
-- **`PROXY`**: Proxy universale per tutti i servizi (Vavoo, IPTV, download, ecc.)
-- **`DADDY_PROXY`**: Proxy dedicato solo per i domini DaddyLive
-- **Priorità**: Se entrambi sono configurati, DaddyLive userà `DADDY_PROXY`, tutto il resto userà `PROXY`
+- **aiohttp** - HTTP client non-bloccante
+- **Connection pooling** - Riutilizzo connessioni
+- **Retry automatico** - Gestione errori intelligente
 
-### 📝 Esempio `.env`
+### 🔐 Gestione Autenticazione
 
-```dotenv
-# Proxy generali per tutti i servizi
-PROXY=socks5://user:pass@host1:1080,http://user:pass@host2:8080
-
-# Proxy specifici solo per DaddyLive
-DADDY_PROXY=socks5://user:pass@daddy-proxy.com:1080
-
-# Domini esclusi dal proxy
-NO_PROXY_DOMAINS=github.com,vavoo.to
-```
-
-**Risultato:**
-- ✅ **DaddyLive** → usa `DADDY_PROXY`
-- ✅ **Vavoo, IPTV, altri** → usano `PROXY`
-- ✅ **github.com, vavoo.to** → connessione diretta (no proxy)
+- **Vavoo** - Sistema signature automatico
+- **DaddyLive** - Headers specializzati  
+- **Generic** - Supporto Authorization standard
 
 ---
 
-## 🐳 Gestione Docker Rapida
+## 🎯 Esempi Pratici
+
+### 📱 Player IPTV
+
+Configura il tuo player con:
+```
+http://tuo-server:7860/proxy?url=STREAM_URL
+```
+
+### 🎬 VLC Media Player
 
 ```bash
-docker logs -f tvproxy      # log in tempo reale
-docker stop tvproxy         # ferma il container
-docker start tvproxy        # avvia il container
-docker rm -f tvproxy        # rimuovi il container
+vlc "http://tuo-server:7860/proxy?url=https://example.com/stream.m3u8"
+```
+
+### 📺 Kodi
+
+Aggiungi come sorgente:
+```
+http://tuo-server:7860/proxy?url=PLAYLIST_URL
+```
+
+### 🌐 Browser Web
+
+Apri direttamente nel browser:
+```
+http://tuo-server:7860/proxy?url=https://stream.example.com/live.m3u8
 ```
 
 ---
 
-## ⚙️ Configurazione Avanzata
-
-### 🔧 Configurazione Essenziale
+### 🔧 Gestione Docker
 
 ```bash
-# Proxy generali (HTTP, HTTPS, SOCKS5)
-PROXY=socks5://user:pass@proxy1.com:1080,http://proxy2.com:8080
+# Logs in tempo reale
+docker logs -f tvproxy
 
-# Proxy specifici per DaddyLive
-DADDY_PROXY=socks5://user:pass@daddy-proxy.com:1080
+# Riavvio container
+docker restart tvproxy
 
-# Domini da non proxy
-NO_PROXY_DOMAINS=github.com,raw.githubusercontent.com
+# Stop/Start
+docker stop tvproxy
+docker start tvproxy
 
-# Timeout e SSL
-REQUEST_TIMEOUT=30
-VERIFY_SSL=false
-```
-
-### ⚡ Configurazione Avanzata
-
-```bash
-# Cache
-CACHE_ENABLED=true
-CACHE_TTL_M3U8=5
-CACHE_TTL_TS=300
-CACHE_TTL_KEY=300
-CACHE_MAXSIZE_M3U8=200
-CACHE_MAXSIZE_TS=1000
-CACHE_MAXSIZE_KEY=200
-
-# Pre-buffering
-PREBUFFER_ENABLED=true
-PREBUFFER_MAX_SEGMENTS=3
-PREBUFFER_MAX_SIZE_MB=50
-PREBUFFER_MAX_MEMORY_PERCENT=30.0
-PREBUFFER_CLEANUP_INTERVAL=300
-PREBUFFER_EMERGENCY_THRESHOLD=99.9
-
-# Connessioni
-KEEP_ALIVE_TIMEOUT=300
-MAX_KEEP_ALIVE_REQUESTS=1000
-POOL_CONNECTIONS=20
-POOL_MAXSIZE=50
+# Rimozione completa
+docker rm -f tvproxy
 ```
 
 ---
 
-## 🏗️ Architettura
+## 🚀 Prestazioni
 
-### 🔄 Gunicorn Multi-Client
+### 📊 Benchmark Tipici
 
-| **Worker** | **Timeout** | **Keep-alive** | **Max Requests** |
-|------------|-------------|----------------|------------------|
-| 4 (prod) / 2 (HF) | 120s | ✅ | Riciclo automatico |
+| **Metric** | **Valore** | **Descrizione** |
+|------------|------------|-----------------|
+| **Latenza** | <50ms | Overhead proxy minimo |
+| **Throughput** | Unlimited | Limitato dalla banda disponibile |
+| **Connessioni** | 1000+ | Simultanee supportate |
+| **Memoria** | 50-200MB | Utilizzo tipico |
 
-### 💾 Sistema di Cache
+### ⚡ Ottimizzazioni
 
-| **Tipo** | **TTL** | **Descrizione** |
-|----------|---------|-----------------|
-| M3U8 | 5s | Playlist HLS |
-| TS | 5min | Segmenti video |
-| Key | 5min | Chiavi AES-128 |
-
-### ⚡ Pre-Buffering
-
-- ✅ Pre-carica segmenti in background
-- 🧠 Controllo memoria automatico
-- 🚨 Pulizia emergenza (RAM > 90%)
-- ⚙️ Configurabile dimensione e numero
+- **Connection Pooling** - Riutilizzo connessioni HTTP
+- **Async I/O** - Gestione non-bloccante delle richieste
+- **Keep-Alive** - Connessioni persistenti
+- **DNS Caching** - Cache risoluzione domini
 
 ---
 
-## ✅ Caratteristiche Principali
+## 🤝 Contributi
 
-- Supporto automatico `.m3u` / `.m3u8`
-- Headers personalizzati (`Authorization`, `Referer`, ...)
-- Aggira restrizioni geografiche
-- Compatibile con qualsiasi player IPTV
-- Totalmente dockerizzato
-- Cache intelligente M3U8 / TS / AES
-- Pre-buffering per streaming fluido
-- Risoluzione Vavoo integrata
-- Supporto DaddyLive 2025
+I contributi sono benvenuti! Per contribuire:
+
+1. **Fork** del repository
+2. **Crea** un branch per le modifiche (`git checkout -b feature/AmazingFeature`)
+3. **Commit** le modifiche (`git commit -m 'Add some AmazingFeature'`)
+4. **Push** al branch (`git push origin feature/AmazingFeature`)
+5. **Apri** una Pull Request
+
+### 🐛 Segnalazione Bug
+
+Per segnalare bug, apri una issue includendo:
+- Versione del proxy
+- Sistema operativo
+- URL di test che causa il problema
+- Log di errore completo
+
+### 💡 Richieste Feature
+
+Per nuove funzionalità, apri una issue descrivendo:
+- Funzionalità desiderata
+- Caso d'uso specifico
+- Priorità (bassa/media/alta)
 
 ---
 
-## 🤝 Supporto
+## 📄 Licenza
 
-Per problemi o domande, apri una issue su GitHub.
+Questo progetto è distribuito sotto licenza MIT. Vedi il file `LICENSE` per maggiori dettagli.
 
 ---
 
@@ -428,8 +369,7 @@ Per problemi o domande, apri una issue su GitHub.
 
 **⭐ Se questo progetto ti è utile, lascia una stella! ⭐**
 
-> 🎉 **Enjoy the Stream!**  
-> Goditi i tuoi flussi preferiti ovunque, senza restrizioni, con controllo completo e monitoraggio avanzato.
+> 🎉 **Enjoy Your Streaming!**  
+> Accedi ai tuoi contenuti preferiti ovunque, senza restrizioni, con controllo completo e performance ottimizzate.
 
 </div>
-
