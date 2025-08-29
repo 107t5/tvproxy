@@ -1,10 +1,8 @@
-version: '3.8'
-
-services:
+services:  
   tvproxy:
-    build: .
+    build: https://github.com/nzo66/tvproxy.git#main
     container_name: tvproxy
-    ports:
-      - "7860:7860"
     restart: unless-stopped
+    ports:
+      - '7860:7860'
 
