@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # --- Moduli Esterni ---
 # Vengono importati singolarmente per un feedback più granulare in caso di errore.
-VavooExtractor, DLHDExtractor, PlaylistBuilder = None, None, None
+VavooExtractor, DLHDExtractor, VixSrcExtractor, PlaylistBuilder = None, None, None, None
 
 try:
     from vavoo_extractor import VavooExtractor
@@ -39,6 +39,13 @@ try:
     logger.info("✅ Modulo PlaylistBuilder caricato.")
 except ImportError:
     logger.warning("⚠️ Modulo PlaylistBuilder non trovato. Funzionalità PlaylistBuilder disabilitata.")
+    
+try:
+    from vixsrc_extractor import VixSrcExtractor
+    logger.info("✅ Modulo VixSrcExtractor caricato.")
+except ImportError:
+    logger.warning("⚠️ Modulo VixSrcExtractor non trovato. Funzionalità VixSrc disabilitata.")
+
 
 # --- Classi Unite ---
 
@@ -122,6 +129,11 @@ class HLSProxy:
                 key = "hls_generic"
                 if key not in self.extractors:
                     self.extractors[key] = GenericHLSExtractor(request_headers)
+                return self.extractors[key]
+            elif 'vixsrc' in url.lower():
+                key = "vixsrc"
+                if key not in self.extractors:
+                    self.extractors[key] = VixSrcExtractor(request_headers)
                 return self.extractors[key]
             else:
                 raise ExtractorError("Tipo di URL non supportato")
@@ -524,6 +536,7 @@ class HLSProxy:
                 "playlist_builder": PlaylistBuilder is not None,
                 "vavoo_extractor": VavooExtractor is not None,
                 "dlhd_extractor": DLHDExtractor is not None,
+                "vixsrc_extractor": VixSrcExtractor is not None,
             },
             "endpoints": {
                 "/proxy": "Proxy principale - ?url=<URL>",
