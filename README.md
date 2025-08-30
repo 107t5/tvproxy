@@ -26,7 +26,7 @@
 
 | 🎯 **Proxy Universale** | 🔐 **Estrattori Specializzati** | ⚡ **Performance** |
 |------------------------|------------------------|-------------------|
-| HLS, M3U8, MPD, PHP streams | Vavoo, DaddyLive HD integrati | Connessioni async e keep-alive |
+| HLS, M3U8, MPD, DLHD streams, VIXSRC | Vavoo, DaddyLive HD integrati | Connessioni async e keep-alive |
 
 | 🌐 **Multi-formato** | 🔄 **Retry Logic** | 🚀 **Scalabilità** |
 |--------------------|-------------------|------------------|
@@ -180,7 +180,8 @@ http://<server-ip>:7860/proxy?url=<URL_STREAM>
 - **HLS (.m3u8)** - Streaming live e VOD
 - **M3U playlist** - Liste canali IPTV  
 - **MPD (DASH)** - Streaming adattivo
-- **PHP streams** - Flussi dinamici
+- **DLHD streams** - Flussi dinamici
+- **VIXSRC** - Streaming VOD
 
 **Esempi:**
 ```bash
