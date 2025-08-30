@@ -26,20 +26,23 @@ class DLHDExtractor:
         self.mediaflow_endpoint = "hls_manifest_proxy"
         self._cached_base_url = None
         self._iframe_context = None
-        self._session_lock = asyncio.Lock()
+        self._request_count = 0 
 
     async def _get_session(self):
         """✅ Sessione persistente con cookie jar automatico"""
         if self.session is None or self.session.closed:
             timeout = ClientTimeout(total=60, connect=30, sock_read=30)
             connector = TCPConnector(
-                limit=10,
-                limit_per_host=3,
-                keepalive_timeout=30,
+                limit=5,
+                limit_per_host=2,
                 enable_cleanup_closed=True,
-                force_close=False,
-                use_dns_cache=True
+                force_close=True,
+                use_dns_cache=False
             )
+            
+            headers = self.base_headers.copy()
+            headers['Connection'] = 'close' 
+        
             # ✅ FONDAMENTALE: Cookie jar per mantenere sessione come browser reale
             self.session = ClientSession(
                 timeout=timeout,
@@ -77,6 +80,12 @@ class DLHDExtractor:
     async def _make_robust_request(self, url: str, headers: dict = None, retries=3, initial_delay=2):
         """✅ Richieste con sessione persistente per evitare anti-bot"""
         final_headers = self._get_headers_for_url(url, headers or {})
+        
+        # ✅ Reset sessione ogni 3 richieste per evitare accumulo connessioni
+        if self._request_count % 3 == 0:
+            if self.session and not self.session.closed:
+                await self.session.close()
+            self.session = None
         
         for attempt in range(retries):
             try:
