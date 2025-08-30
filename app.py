@@ -509,15 +509,12 @@ class HLSProxy:
             return web.Response(text="<h1>Errore 500</h1><p>Impossibile caricare la pagina info.</p>", status=500, content_type='text/html')
 
     async def handle_options(self, request):
-        """Gestisce richieste OPTIONS con headers ottimizzati per Android"""
+        """Gestisce richieste OPTIONS per CORS"""
         headers = {
             'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS, POST',
-            'Access-Control-Allow-Headers': 'Range, Content-Type, Authorization, User-Agent, Referer',
-            'Access-Control-Expose-Headers': 'Content-Length, Accept-Ranges, Content-Range',
-            'Access-Control-Max-Age': '3600',
-            'Connection': 'close',
-            'Cache-Control': 'no-cache, no-store, must-revalidate'
+            'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+            'Access-Control-Allow-Headers': 'Range, Content-Type',
+            'Access-Control-Max-Age': '86400'
         }
         return web.Response(headers=headers)
 
