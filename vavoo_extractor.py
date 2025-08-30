@@ -20,40 +20,27 @@ class VavooExtractor:
         }
         self.session = None
         self.mediaflow_endpoint = "proxy_stream_endpoint"
-        self._request_count = 0 
         
     async def _get_session(self):
         if self.session is None or self.session.closed:
             timeout = ClientTimeout(total=60, connect=30, sock_read=30)
             connector = TCPConnector(
-                limit=5,
-                limit_per_host=2,
+                limit=20,
+                limit_per_host=10,
+                keepalive_timeout=60,
                 enable_cleanup_closed=True,
-                force_close=True,
-                use_dns_cache=False
+                force_close=False,
+                use_dns_cache=True
             )
-            
-            # ✅ Headers che forzano connection close
-            headers = {'User-Agent': self.base_headers["user-agent"], 'Connection': 'close'}
-        
             self.session = ClientSession(
                 timeout=timeout,
                 connector=connector,
-                headers=headers
+                headers={'User-Agent': self.base_headers["user-agent"]}
             )
         return self.session
 
     async def get_auth_signature(self, retries=3, delay=2) -> Optional[str]:
         """Ottiene la signature di autenticazione per l'API Vavoo con retry logic"""
-        
-        # ✅ INCREMENTA CONTATORE E RESET SESSION PERIODICO
-        self._request_count += 1
-        if self._request_count % 3 == 0:  # Reset ogni 3 richieste
-            if self.session and not self.session.closed:
-                await self.session.close()
-            self.session = None
-            logger.info(f"🔄 Session reset periodico Vavoo (richiesta #{self._request_count})")
-        
         headers = {
             "user-agent": "okhttp/4.11.0",
             "accept": "application/json", 
@@ -154,15 +141,6 @@ class VavooExtractor:
         return None
 
     async def _resolve_vavoo_link(self, link: str, signature: str) -> Optional[str]:
-        
-        # ✅ INCREMENTA CONTATORE E RESET SESSION PERIODICO  
-        self._request_count += 1
-        if self._request_count % 3 == 0:  # Reset ogni 3 richieste
-            if self.session and not self.session.closed:
-                await self.session.close()
-            self.session = None
-            logger.info(f"🔄 Session reset periodico Vavoo (richiesta #{self._request_count})")
-        
         headers = {
             "user-agent": "MediaHubMX/2",
             "accept": "application/json",
