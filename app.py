@@ -6,7 +6,6 @@ import os
 import urllib.parse
 from urllib.parse import urlparse, urljoin
 import xml.etree.ElementTree as ET
-
 import aiohttp
 from aiohttp import web
 from aiohttp import web, ClientSession, ClientTimeout, TCPConnector
@@ -46,9 +45,7 @@ try:
 except ImportError:
     logger.warning("⚠️ Modulo VixSrcExtractor non trovato. Funzionalità VixSrc disabilitata.")
 
-
 # --- Classi Unite ---
-
 class ExtractorError(Exception):
     """Eccezione personalizzata per errori di estrazione"""
     pass
@@ -81,7 +78,6 @@ class GenericHLSExtractor:
 
         parsed_url = urlparse(url)
         origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
-
         headers = self.base_headers.copy()
         headers.update({"referer": origin, "origin": origin})
 
@@ -239,13 +235,58 @@ class HLSProxy:
             else:
                 segment_url = f"{base_url.rsplit('/', 1)[0]}/{segment_name}"
             
-            return await self._proxy_stream(request, segment_url, {
+            # Gestisce la risposta del proxy per il segmento
+            return await self._proxy_segment(request, segment_url, {
                 "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "referer": base_url
-            })
+            }, segment_name)
             
         except Exception as e:
             logger.error(f"Errore nel proxy segmento .ts: {str(e)}")
+            return web.Response(text=f"Errore segmento: {str(e)}", status=500)
+
+    async def _proxy_segment(self, request, segment_url, stream_headers, segment_name):
+        """✅ NUOVO: Proxy dedicato per segmenti .ts con Content-Disposition"""
+        try:
+            headers = dict(stream_headers)
+            
+            # Passa attraverso alcuni headers del client
+            for header in ['range', 'if-none-match', 'if-modified-since']:
+                if header in request.headers:
+                    headers[header] = request.headers[header]
+            
+            timeout = ClientTimeout(total=60, connect=30)
+            async with ClientSession(timeout=timeout) as session:
+                async with session.get(segment_url, headers=headers) as resp:
+                    response_headers = {}
+                    
+                    for header in ['content-type', 'content-length', 'content-range', 
+                                 'accept-ranges', 'last-modified', 'etag']:
+                        if header in resp.headers:
+                            response_headers[header] = resp.headers[header]
+                    
+                    # Forza il content-type e aggiunge Content-Disposition per .ts
+                    response_headers['Content-Type'] = 'video/MP2T'
+                    response_headers['Content-Disposition'] = f'attachment; filename="{segment_name}"'
+                    response_headers['Access-Control-Allow-Origin'] = '*'
+                    response_headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+                    response_headers['Access-Control-Allow-Headers'] = 'Range, Content-Type'
+                    
+                    response = web.StreamResponse(
+                        status=resp.status,
+                        headers=response_headers
+                    )
+                    
+                    await response.prepare(request)
+                    
+                    async for chunk in resp.content.iter_chunked(8192):
+                        await response.write(chunk)
+                    
+                    await response.write_eof()
+                    return response
+                    
+        except Exception as e:
+            logger.error(f"Errore nel proxy del segmento: {str(e)}")
             return web.Response(text=f"Errore segmento: {str(e)}", status=500)
 
     async def _proxy_stream(self, request, stream_url, stream_headers):
@@ -279,12 +320,13 @@ class HLSProxy:
                             text=rewritten_manifest,
                             headers={
                                 'Content-Type': 'application/vnd.apple.mpegurl',
+                                'Content-Disposition': 'attachment; filename="stream.m3u8"',
                                 'Access-Control-Allow-Origin': '*',
                                 'Cache-Control': 'no-cache'
                             }
                         )
                     
-                    # ✅ NUOVO: Gestione per manifest MPD (DASH)
+                    # ✅ AGGIORNATO: Gestione per manifest MPD (DASH)
                     elif 'dash+xml' in content_type or stream_url.endswith('.mpd'):
                         manifest_content = await resp.text()
                         
@@ -298,6 +340,7 @@ class HLSProxy:
                             text=rewritten_manifest,
                             headers={
                                 'Content-Type': 'application/dash+xml',
+                                'Content-Disposition': 'attachment; filename="stream.mpd"',
                                 'Access-Control-Allow-Origin': '*',
                                 'Cache-Control': 'no-cache'
                             })
@@ -566,13 +609,12 @@ class HLSProxy:
             logger.error(f"Errore durante cleanup: {e}")
 
 # --- Logica di Avvio ---
-
 def create_app():
     """Crea e configura l'applicazione aiohttp."""
     proxy = HLSProxy()
     
     app = web.Application()
-
+    
     # Registra le route
     app.router.add_get('/', proxy.handle_root)
     app.router.add_get('/builder', proxy.handle_builder)
